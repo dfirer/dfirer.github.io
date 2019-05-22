@@ -1,0 +1,437 @@
+---
+title: "Final Project"
+author: "Aaron Green, Danielle Firer"
+date: "May 20, 2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+#Introduction and Motivation
+This is a crash course introduction to the data science pipeline. The pipeline can be broken down into three main parts:
+1. Data curation, parsing, and management
+2. Exploratory data analysis(EDA)
+3. Hypothesis testing and machine learning to provide analysis
+
+We will travel the pipeline through analyzing a data set detailing automobile accidents occuring in the state of Maryland in 2012 that were investigated by state police. This data, and many other interesting data sets can be found at in the Maryland government's Open Data Portal, with our specific data set found here: https://opendata.maryland.gov/Public-Safety/2012-Vehicle-Collisions-Investigated-by-State-Poli/pdvh-tf2u. Ever since the idea of open data began to gain traction, data gathering centers have begun publishing their data for the public to use, and due to this there are vast amounts of data existing on the internet waiting to be analyzed.
+
+This specific set of data is nice for two reasons:\newline
+1) Driving is a ubiquitous experience, and even though it is nearly universal, it can still be extremely risky. By having a better understanding of the intricacies of risks that may occur on the road, one can better know what to expect when going out for a drive.\newline
+2) Data sets with more points and attributes can (but don't necessarily) offer a more rich experience to analyze due to larger sample sizes and complexity. \newline
+
+We will be analyzing just over 18,000 accidents in this tutorial, occurring all over the state of Maryland. 
+
+
+#Data Curation, Parsing, and Management
+
+The first step is to load the necessary libraries. One way to organize one's code entails loading all of the necessary libraries before beginning, the advantage of this is that each library is found in the same place and can be easily modified. 
+```{r setup, results='hide', warning = FALSE, message = FALSE}
+library(tidyverse);
+library(lubridate);
+library(caret);
+library(broom);
+library(plotROC);
+library(rpart);
+library(randomForest);
+library(stringr);
+library(googleAuthR)
+library(googleway)
+```
+
+##Loading the data
+The next step is to import the dataset. This is done with the function read_csv which is a part of the readr package. readr as well as many other packages are included in tidyverse. The tidyverse set of packages is used to clean up data. Because tidyverse and readr are so common, there are many resources online dedicated to these, one such location being here: https://www.rstudio.com/resources/cheatsheets/. \newline
+
+The data on this website is hosted by Socrata Open Data, which makes it extremely easy to import, as Socrata has its own API which one can simply request a csv of any data. The main socrata website can be found here: https://dev.socrata.com/
+
+
+```{r load_accidents}
+#Reads a csv direction into a data frame with a limit of 20000 entities.
+accidents <- read_csv("https://opendata.maryland.gov/resource/pdvh-tf2u.csv?$limit=20000");
+head(accidents) #shows the first few entities as an example
+```
+
+##Cleaning Data
+
+In order to use the data to the best of our abilities, the attributes should be split into each type of category they fall under. There are a few main types of data types:
+
+* Categorical: attribute that can only take one value of a finite set
+
+* Discrete Numeric: attributes that can take specific values from elements of ordered, discrete   (possibly infinite) sets
+
+* Continuous Numeric: attributes that can take any value in a continuous set, like height
+
+* Text: arbitrary strings
+
+* Datetime: date and time of some event or observation
+
+* Geolocation: Latitude and Longitude of an event or observation
+
+The data we are working with has over 18000 accidents reported. Each accident is considered to be one "entity" in the world of data science, and each entity has several attributes. Though each accident has 18 attributes, we will not be paying attention to several of them. These are the attributes we will be interested in for the majority of the project. 
+
+* Case_Number:This is what we will refer to as the primary key, which is the attribute that is different for each entity so it is easy to be able to identify which entity is being referenced. The case number is the case number the police assigned to the accident when they were called on-site.
+
+* BARRACK: The barrack of the incident. This is more specific than county and is distinct from city name.
+
+* ACC_Date: The date of the incident, given in form YYYY Mon DD
+
+* ACC_TIME: The time of the incident, given in 24:00 format
+
+* ACC_TIME_CODE: A number 1 through 6, with each number representing a period of time throughout the day increasing in four hour increments
+
+* DAY_OF_WEEK: Day of the week
+
+* COUNTY_NAME: County that the incident occurred in
+
+* CITY_NAME: If incident occured in the city, lists city name
+
+* INJURY: States whether or not an injury ocurred
+
+* COLLISION_WITH_1: Primary type of collision
+
+* COLLISION_WITH_2: Secondary type of collision if applicable
+
+Although it was very easy to import the data, it came entirely as strings of text and sometimes doubles, which are not very useful. The first step to clean this data is to convert data types and change all the text to relevant data types such as numbers and Factors. 
+
+To make the data more useful, some of the attributes had to edited. This includes changing values that should be N/A because they contain values that mean there is missing data. For example, the attirbute city name contained many entities where the city name was "Not Applicable", so each time there that is the value it was replaced with NA so that R knew that it was missing. The date and time of each accident were also combined into one category known as datetime. Datetime is represented in POSIXCT format, which counts time from the epoch, otherwise known as an arbitrary time that is the beginning of all time on all computers. This format makes it very easy to compare dates and times, with more information being found [here](https://www.stat.berkeley.edu/~s133/dates.html).
+```{r change types}
+accidents$city_name[accidents$city_name=="Not Applicable"] = NA
+
+accidents <- unite(accidents, "acc_date_time", "acc_date", "acc_time", sep = " ", 
+                   remove = TRUE)
+accidents <- type_convert(accidents, col_types = cols("acc_date_time"= col_datetime(
+  format = '%Y-%m-%d %H:%M:%S')))
+```
+
+In order to be able to analyze the data in the most efficient way, the vectors of string had to be turned into categorical attributes. To do this, the factor function is used. Factor is a categorical data type in R. In order to be able to destinguish which part of the day is the most prone to an accident, the time code that was given as just an integer between 1 and 7 was switched to the range of time that it correlates with.
+```{r beginnings}
+accidents$day_of_week <- factor(accidents$day_of_week)
+accidents$county_name <- factor(accidents$county_name)
+accidents$collision_with_1 <- factor(accidents$collision_with_1)
+accidents$collision_with_2 <- factor(accidents$collision_with_2)
+accidents$dist_direction <- factor(accidents$dist_direction)
+accidents$barrack <- factor(accidents$barrack)
+accidents$city_name <- factor(accidents$city_name)
+accidents$injury <- factor(accidents$injury)
+accidents$prop_dest <- factor(accidents$prop_dest)
+levels(accidents$injury) <- c(FALSE,TRUE)
+accidents$acc_time_code <- sapply( accidents$acc_time_code, switch, "0:00-04:00","04:01-08:00","08:01-12:00","12:01-16:00","16:01-20:00", 
+"20:01-24:00","<24:00")
+
+head(accidents)
+```
+
+#Basic Operations and Functions in R
+
+We are now going to go over some of the basic functions in R that allow us to manipulate the data so that we can use it to answer the questions we want to find out more about.
+
+##Analyzing Crashes Based On Time 
+
+The first thing we wanted to find out was if there was a month that had more accidents than others. This is something we were curious about because of the fact that many drivers are more cautious when driving in winter weather than while it is warm out. Another question we asked ourselves was if there was a specific time of day when more accidents occur? This question came up because one would think that there would be more accidents during high pressure hours or conversely if there are more crashes because it is dark and people's driving may be impaired.
+
+Our first step to easily analyze crashes is to create a separate column which represents the month each crash occurred in. Thanks to storing our dates and times in the date_time format, we can easily create a new Month Column. 
+```{r createmonths}
+#the mutate function makes a new column(attribute) based on the values of other attributes
+#for each entity
+accidents <- accidents %>% mutate( month = month(accidents$acc_date_time, label = TRUE, 
+                                                 abbr = FALSE))
+```
+
+Now that we have an easy way to track months, let's do a quick visualization of the amount of accidents that occur in each month. The simplest way to do this is by using the library ggplot2 (in tidyverse) to make a bar plot. The function ggplot has many capabilities. Here, we use it to make a bargraph of the frequency of accidents each month. If you are interested in learning about what else it can do, you can look at this [cheatsheet.](https://www.rstudio.com/wp-content/uploads/2015/03/ggplot2-cheatsheet.pdf)
+```{r barmonths}
+accidents %>%ggplot(mapping = aes(x = month)) + geom_bar() + xlab("Month") + ylab("Number of Accidents")+ggtitle("Number of Accidents in Each Month in 2012")+ theme(axis.text.x = 
+                                                   element_text(angle = 90))
+```
+Although it was so easy to create this bar graph, it won't be so easy to actually analyze the data or get more insightful information. What if instead of just looking at the number of accidents in each month, we look at the distribution of accidents across each day of each month? After all, the length of daytime changes, so the distribution of accidents might too. However, this operation is slightly harder than the previous plot, because it involves making twelve graphs. Thankfully, ggplot provides the function facet_wrap for us, so we can easily place multiple graphs in context with each other. This plot also makes use of the ACC_TIME_CODE attribute to easily display time!
+```{r visualizemonths, message=FALSE, warning= FALSE}
+accidents %>% ggplot(mapping = aes(x  = acc_time_code)) + facet_wrap(~month) +geom_histogram(stat = "count") + ggtitle("Accidents Throughout The Day In Each Month") + ylab("Accidents") + xlab("Time Period") + 
+  theme(axis.text.x = element_text(angle = 90))
+```
+It's easy to see that each month had different accccident tendencies, although these differences are very hard to quantify.
+
+##Exploratory Data Analysis
+
+Now that we've had fun doing basic visualizing of data, we need to get down to work in order to actually interpret what it may mean.
+
+We will be organizing data into months, time of day, and number of accidents that occurred in this period. Naturally, we first want to make a data frame in order to keep track of this information. We do this by first grouping the data into months and times, and then using R's summarize function to count each accident. 
+
+```{r months1, message=FALSE, warning= FALSE}
+monthtable <- accidents %>% group_by(month, acc_time_code) %>% summarize(num = n())
+```
+
+#Central Tendency, Spread, and, Skew
+
+Central Tendency, Spread, and Skew are three properties that can describe the distribution of values in a plot. Central Tendency is used to describe the center of the distribution(either the mean or median). Spread is the measure of the distance between values so we can see if the data is all close together or far apart. Many times, the standard deviation or interquartile range are used to measure the spread. The skew measures if there is more data to one side of a central marker than the other. If you need a refresher on some of the statistical definitions, you can check this [site](https://statistics.laerd.com/statistical-guides/measures-of-spread-range-quartiles.php) out.
+
+Let's calculate these values for the time of accidents.
+```{r fivevar1, message=FALSE, warning= FALSE}
+avg_time <- summarise(accidents, avg_time=mean(acc_date_time))
+avg_time[[1,1]]
+```
+
+```{r fivevar2, message=FALSE, warning= FALSE}
+sd_time <- summarise(accidents, sd_time=sd(acc_date_time))
+sd_time[[1,1]]
+```
+The first time that is used by a computer is Jan 1, 1970 so this means that the standard deviation is 3 months, 15 days, 4 hours and 57 seconds. Which means that 68% of the data is within about 7 months of the year.
+```{r fivevar3, message=FALSE, warning= FALSE}
+skew_time <- summarise(accidents, first=quantile(acc_date_time, p=1/4),
+            third=quantile(acc_date_time, p=3/4))
+skew_time[[1,2]]- skew_time[[1,1]]
+```
+
+In addition to just seeing these variable properties it is useful to use this information to normalize the data so that we can compare values without worrying that there may be a trend between data that effects the way the data may look. For example, if you were to look at the price of an apple at different grocery stores over the years, you would also have to account for inflation otherwise you would think that the prices were always rising.
+
+So when we ask how many accidents occur at each time of each day, we want to see how much each time period differs from one other. To do this, we will add a column in our new dataframe which represents the normalized amount of accidents occuring in a specific time period, taking into account the mean accident amount and the standard deviation of the number of accidents. We will assume a Poisson distribution for this normalization step. A normalized value of 0 represents the "average" number of accidents in a time period in a month, and a normalized value of -1 would represent one standard deviation away from the average number of accidents with a smaller value and +1 would represent one standard deviation away from the average number of accidents with a larger value than the average. 
+
+```{r normalize, message=FALSE, warning= FALSE}
+monthtable <- monthtable %>% group_by(acc_time_code) %>% mutate(normalized = ((num - mean(num))/ sd(num)))
+
+head(monthtable)
+```
+
+Now, we are ready to graph this normalized data for each month.
+```{r more months, message=FALSE, warning= FALSE}
+ggplot(monthtable, aes(x=acc_time_code, y = normalized)) +
+  geom_bar(stat = "identity") + facet_wrap(~month) + xlab("Time Period") + ylab("Standard Deviations Away From Average") + 
+  ggtitle("Normalized Time Period Graphs For Each Month") + theme(axis.text.x = element_text(angle = 90))
+```
+These graphs are much clearer than the above set of plots! These graphs show that compared to the average of each time period, February and March seem to have less accidents than other months at almost all times of day. Conversely, May seems to have more accidents that the average for most periods of time throughout the day.With a cursory glance, one can tell that January from 8AM to noon has a very average number of accidents, while December has a relatively large number of accidents in that time period, as does October. 
+
+#Visualizing A Specific Day
+
+Here, we are graphing the data for the accidents on Christmas. This allows us to see how we would select for a specific month and day. Moreover, many people drink on Christmas which could lead to drunk driving and so there could be more accidents because of this, so we were curious to visualize the data. 
+```{r christmas, message=FALSE, warning= FALSE}
+accidents <- accidents %>% mutate( day = day(accidents$acc_date_time))
+accidents %>% filter(month == "December" & day == 24) %>% 
+  ggplot(mapping = aes(x = acc_date_time)) +geom_histogram() + theme(axis.text.x = element_text(angle = 90))
+```
+It seems like the most accidents happened midday which would seem to correlate with higher traffic volumes rather than what we had assumed.
+
+Next, we graph the frequency of accidents during a certain time period based on the day of the week.
+```{r weekdays, message=FALSE, warning= FALSE}
+accidents %>% ggplot(mapping = aes(x  = acc_time_code)) + facet_wrap(~day_of_week) +
+  geom_histogram(stat = "count") + theme(axis.text.x = element_text(angle = 90))
+```
+There seems to be an increasing trend in the number of accidents as a day goes on, where some days have a clear trend where as others do not. Let's investigate and find the weekday that is the most different from the average for that weekday. In case that was confusing, we will compare all of the Mondays and find the one that is the most different, and then continue for each weekday.
+
+We will do this by making a new data frame with each day and time period and the number of accidents. Based on the table, we will look at the data for all of the Sundays in April, and graph their values.
+```{r fun days, message=FALSE, warning= FALSE}
+accidents %>% group_by(month, day, day_of_week) %>% summarize(n = n()) %>% ungroup() %>% mutate(normalized =  
+              (n - mean(n))/sd(n)) %>% arrange(desc(normalized)) 
+accidents %>% filter(month == "April" & day_of_week == "SUNDAY") %>% ggplot(mapping = aes(x  = acc_time_code)) + 
+  facet_wrap(~day) +geom_histogram(stat = "count") + theme(axis.text.x = element_text(angle = 90))
+```
+Looking at these graphs, there seems to be a lot of variation between the Sundays.
+
+##Hypothesis Testing and Machine Learning
+
+Statistical and Machine Learning techniques are commonly used in data analysis. We often find ourselves asking if our data is statistically significant. Previously we spoke about variation but we didn't look at randomness. But. randomness is an inprtant aspect of our data analysis. If we predict a model and find that it is correct 80% of the time based on our data, we want to know if it randomly was correct or if it is actually able to predict to some degree. This is why we study probability. We want to use probability to differentiate between variation and randomness. Hypothesis testing can be used to prove that there is a correlation between two variables and many times machine learning is used if we want to predict the value of one variable using others. In this section, we will be trying to find if there is a correlation between the type of accident and whether or not a injury occurs. We will then try to use variables to see if we can predict WHEN AN ACCIDENT WILL OCCUR.
+
+#Correlation Between Accidents and Injury
+
+In hypothesis testing, our goal is to prove that there is statistical significance. Here we will be trying to prove that the type of accident is important when predicting whether or not there will be an injury. Here we will test the hypothesis: the type of accident is a factor in predicting the likelihood of an injury. This means we will try and see if there is a statistical difference between the mean for all the accidents and the mean for each individual type of accident. Many times, this is done by proving the opposite is false by rejecting the null hypothesis. In this case, we will try to reject that there is no difference between the mean for all the accidents and the mean for each individual type of accident.
+
+First, the rate of injuries in accidents was found.
+```{r totalmeaninju8ry, message=FALSE, warning= FALSE}
+total_mean <- (accidents %>% 
+                 group_by(injury) %>% 
+                 summarize(count = n()) %>% 
+                 ungroup() %>% 
+                 mutate(total = sum(count)) %>% 
+                 mutate(injury_rate = count / total) %>% 
+                 filter(injury == TRUE) %>% select(injury_rate))[[1]]
+```
+
+Then the data was arranged based on the type of accident collision and the fraction of accidents that resulted in a reported injury was shown. The p_morethan attribute finds the probability that the fraction would be greater and the p_lessthan is the probability that the fraction would be less than the value of frac. Pedestrian, bicycle, non-collision, animal, other type of collision and vehicle collisions were all significantly different from the average that was found for the data. This is known because the p value (more than is the frac is greater than total_mean and less than if the frac is less than the total_mean) is less than 5% or .05. That means that we can say with 95% certainty that the data shows that the difference between the percentages is significant.
+```{r injury1, message=FALSE, warning= FALSE}
+accidents %>% group_by(collision_with_1, injury) %>% summarize(count = n()) %>% 
+  ungroup() %>% group_by(collision_with_1) %>% mutate(total = sum(count)) %>% 
+  mutate(frac = count/total) %>% 
+  mutate(p_morethan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count),lower.tail = FALSE))  %>% 
+  mutate(p_lessthan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count),lower.tail = TRUE)) %>%  
+  filter(injury == TRUE) %>% 
+  select(collision_with_1, frac, count, p_morethan, p_lessthan) %>% 
+  arrange(desc(frac))
+```
+To do these calculations, we used a function called pnorm which is in the stats library. It adds up the probabilities that the value would be between a given number and positive infinity if lower.tail = FALSE and negative infinity if lower.tail = TRUE. To decide whether we should be looking at the p_morethan or p_lessthan, we look at the frac value. If it is greater than the total mean, .345, then we use p_morethan and if it is less than we use p_lessthan.
+
+Now let's look at the data for collisions with 2 vehicles. Again, the greater the frac value, the smaller the p_morethan value. This is because the greater the frac value is from the mean, the less area under the curve between that value and positive infinity. For collisions with 2 vehicles; pedestrians, non-collision, vehicle, fixed object, and other collision were all significantly different from the total_mean.
+```{r injury, message=FALSE, warning= FALSE}
+accidents %>% group_by(collision_with_2, injury) %>% summarize(count = n()) %>% ungroup() %>% group_by(collision_with_2) %>% mutate(total = sum(count)) %>% mutate(frac = count/total) %>% mutate(p_morethan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count), lower.tail = FALSE))%>%  mutate(p_lessthan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count),lower.tail = TRUE)) %>% filter(injury == TRUE) %>% select(collision_with_2, frac, count, p_morethan, p_lessthan) %>% arrange(desc(frac))
+```
+
+Now, we are going to look at both collision types and compare to the total mean. It some of the results include that a vehicle-fixed object collision, some sort of pedestrian collision, just one vehicle, a vehicle on vehicle collision, sorts of odd collisions that are not specified, fixed object collisions, and bicycle involved collisions are all significantly different.
+```{r injury3, message=FALSE, warning= FALSE}
+accidents %>% group_by(collision_with_1, collision_with_2, injury) %>% summarize(count = n()) %>% ungroup() %>% group_by(collision_with_1, collision_with_2) %>% mutate(total = sum(count)) %>% mutate(frac = count/total) %>% mutate(p_morethan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count), lower.tail = FALSE))%>%  mutate(p_lessthan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count),lower.tail = TRUE)) %>% filter(injury == TRUE, count > 10) %>% select(collision_with_1, collision_with_2, frac, count, p_morethan, p_lessthan) %>% arrange((p_morethan))
+
+
+```
+To sum it up, we found that collisions involving two seperate moving objects are more likely to cause an injury versus just any accident. This data also shows that using the overall mean to determine if there will be an injury given an accident is not good enough.
+
+For the last part, we tried to see if the time of the accident plays a role in the likelihood of an injury. 
+```{r injury4, message=FALSE, warning= FALSE}
+accidents %>% group_by(acc_time_code,day_of_week, injury) %>% summarize(count = n()) %>% ungroup() %>% group_by(acc_time_code, day_of_week) %>% mutate(total = sum(count)) %>% mutate(frac = count/total) %>% mutate(p_morethan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count),lower.tail = FALSE))  %>% mutate(p_lessthan = pnorm(frac, mean = total_mean, sd = total_mean / sqrt(count),lower.tail = TRUE)) %>%  filter(injury == TRUE) %>% select(acc_time_code, day_of_week,frac, count, p_morethan, p_lessthan) %>% arrange(p_morethan)
+```
+The results specifically include that Sunday afternoon, Thursday afternoon, Saturday morning through early afternoon, and Monday afternoon all were significantly different from the total injury rate for the sample. Overall it seems like the afternoons always have more accidents, and a few mornings during the work week also do. This could possibly be attributed to the high volumes of people on the road.
+
+#Machine Learning
+
+Machine learning is an important application of data science in day to day life. The objective of machine learning is to provide the computer with data from a sample, and allow the computer to come up with conculsions based on this data on it's own. Previously, we gave the computer data and told it how we wanted to use it to compare the data, but with ML only data will be provided and the computer will try to predict the values using this information.
+
+For this part of the tutorial, we will be creating a model to predict whether or not an injury might occur given other aspects of the data. In order to do this, we will look at both random forests and decision trees.
+
+First, we will separate our huge amount of data into two separate data frames, one for training and one for testing, and clean it up a bit more. 
+```{r machinelearning, message=FALSE, warning= FALSE}
+
+cleaned <- accidents %>% select(-city_name, -dist_from_intersect, -intersect_road, -road,  -acc_date_time) %>% drop_na
+set.seed(1234)
+test_random_forest_df <- cleaned %>%
+  group_by(injury) %>%
+  sample_frac(.5) %>%
+  ungroup()
+
+train_random_forest_df <- cleaned %>%
+  anti_join(test_random_forest_df, by="case_number")
+
+```
+
+Creating a random forest is as easy as using the train function from the caret package. For this forest, we will be using 50 trees. We are selecting every attribute of accidents in order to predict whether or not there will be an injury. 
+```{r createfit, message=FALSE, warning= FALSE}
+rf_fit <- train(injury~.,
+                data = train_random_forest_df %>%
+                  select(-case_number, -day), ntree = 50,
+                method="rf", na.action = na.omit,
+                trControl=trainControl(method="none"))
+
+rf_fit
+```
+
+We will be comparing our 50 tree forest to a single tree forest. In order to create a tree, we will use the rpart function of the rpart package. As will become evident soon, the tree makes it very easy to see the logical flow of our decision of whether or not an injury may occur. This tree shows that the decision is as simple as looking at the property destruction attribute, and selecting the opposite of its value. This is incredibly simple, so it may throw up some red flags in our modeling. 
+```{r tree, message=FALSE, warning= FALSE}
+tree <- rpart(injury~., data = train_random_forest_df, method = "class", control = rpart.control(minsplit=5,minbucket = 2, cp=.01))
+
+plot(tree)
+text(tree, pretty=0, cex = .5)
+```
+
+Let's now see how well our models look by using a confusion table to see any false positives or negatives.  Our first table displayed is the random forest, and our second table is for the decision tree. Perhaps suprisingly, both models seem to be very successful both for true negatives and true positives!
+```{r confusion, message=FALSE, warning= FALSE}
+test_predictions_tree <- predict(tree, newdata = test_random_forest_df, type = "class")
+test_predictions <- predict(rf_fit,                      newdata = test_random_forest_df %>%
+                              select(-case_number))
+
+table(pred=test_predictions,
+      observed=test_random_forest_df$injury)
+
+table(pred = test_predictions_tree, observed = test_random_forest_df$injury)
+```
+
+Because random forests are hard to interpret, we can now see how much it takes into account each variable into the final model. It is evident in this model, too, that property distruction has a strong correlation with injury. Although this is beneficial to know, because the relation is so strong, let's try to model the same data and question without using the property distruction attribute.  
+```{r importance, message=FALSE, warning= FALSE}
+
+variable_importance <- varImp(rf_fit)
+
+variable_importance
+```
+
+Now we are going to create a less flawed model, but ultimetely we will find that it is also less successful.
+
+So let's try again, this time looking only at attributes other than destruction of property via the same methods. 
+```{r createfit2, message=FALSE, warning= FALSE}
+rf_fit <- train(injury~.,
+                data = train_random_forest_df %>%
+                  select(-case_number, -prop_dest), ntree = 50,
+                method="rf", na.action = na.omit,
+                trControl=trainControl(method="none"))
+
+rf_fit
+```
+
+Because we can guess that there will be a less strong correlation between the rest of the variables and injury, we modify the cp control variable to be less than .01, which will create a more complex yet hopefully more successful tree. 
+```{r tree2, message=FALSE, warning= FALSE}
+tree <- rpart(injury~., data = train_random_forest_df %>% select(-prop_dest), method = "class", control = rpart.control(minsplit=5,minbucket = 2, cp=.005))
+
+plot(tree)
+text(tree, pretty=0, cex = .5)
+```
+Let's make two new confusion tables. It is evident that both models can readily detect true negatives, however this is mostly due to the fact that most of the accidents do not involve injuries. When trying to quickly see which model is better, we can see that the first table (the random forest one) correctly detects 775 injury accidents while the tree only detects 389. 
+```{r confusion2, message=FALSE, warning= FALSE}
+
+test_predictions_tree <- predict(tree, newdata = test_random_forest_df, type = "class")
+test_predictions <- predict(rf_fit,                      newdata = test_random_forest_df %>%
+                              select(-case_number, -prop_dest))
+
+table(pred=test_predictions,
+      observed=test_random_forest_df$injury)
+
+table(pred = test_predictions_tree, observed = test_random_forest_df$injury)
+```
+
+Let's again look at the importance of variables in the random forest. Suprisingly, now the day of the month has the strongest importance! However, it is easy to see that the rest of the variables now have more importance. 
+```{r importance2, message=FALSE, warning= FALSE}
+variable_importance <- varImp(rf_fit)
+variable_importance
+```
+So overall, we found that it is very difficult to try and predict whether an injury will occur. So sadly we cannot make any statements about when injuries will occur, but we can say that the destruction of property may be a good indicator! If you think about it, this makes sense because accidents can be eradic and each one can be slightly different. Luckily, nowadays more cars are built to protect us if we get into an accident so it is difficult to predict when they will work without more information like speed and angles of crashes.
+
+##Mapping
+
+We thought it would be interesting to look at where car crashes are happening in Maryland. To do this we need to edit the information that was given about the roads the accidents occurred on so that it is something we can search using a Google API. The reason we need to do this, is because we need to find the latitude and longitude of the accidents to be able to map them. We were only given the road names though, so by using a Google API we are able to map them using the technology that Google Maps uses. You can think of this as us preparing data to send to search on Google Maps, and then use receiving the latitude and longitude back from Google Maps.
+```{r county_data}
+accidents$intermednewroad <- substr(accidents$road, 9, str_length(accidents$road))
+accidents$newintersectroad <- substr(accidents$intersect_road, 9, str_length(accidents$intersect_road))
+accidents <- accidents %>%
+  mutate(NEWESTroad= ifelse(str_detect(intermednewroad, "NO NAME"), substr(accidents$road, 0, 9), intermednewroad)) %>%
+  mutate(NEWESTintersectroad= ifelse(str_detect(newintersectroad, "NO NAME"), substr(accidents$intersect_road, 0, 9), newintersectroad)) %>% select(-newintersectroad, -intermednewroad)
+
+accidents
+```
+
+Not to give away any spoilers, but we ultimately found that there are a few pitfalls in using R to work with some of the Google platforms at the time, so we were not able to successfully map the accidents but we want to go over how to do it, so that when this is fixed you will be able to use this to map! 
+
+Since we were not successful we will just go over using this for the first row in the table.
+```{r try}
+accidents$lon <- NA
+accidents$lat <- NA
+try <- paste(paste(paste(accidents$NEWESTroad[1], accidents$NEWESTintersectroad[1], sep=" "), accidents$county_name[1], sep= " "), "Maryland", sep= " ")
+
+try
+```
+We have added a longitude and latitude attribute to the table with NA values for all of the entities. Then, we concatenated all of the strings for the place of the accident. To get the most accurate search possible, the county and state were added to try and reduce the likelihood of getting the wrong match. That is in the try variable.
+
+We then search for the string using the google_places function which is a part of the googleway library. For the privacy of our Google account the actual query was not shown since it includes the account's key. Instead we show what the query would look like followed by the results:
+
+res <- google_places(search_string = try,
+                     key = [your key here])
+                     
+res
+
+```{r ggplaces, echo=FALSE, message=FALSE, warning= FALSE}
+res <- google_places(search_string = try,
+                     key = "NOPE")
+res
+```
+
+Then, you would use those results with the geocode function. This is the part that is currently not working, because Google changed the way a person uses the API, the format that the information is sent is no longer correct because it is trying to send information that is no longer necessary to query. We were not able to get around this problem, but when this is fixed for non-business accounts we will be able to use geocode again! If geocode were to work the code would look like this:
+
+CODE BEGINS HERE
+register_google(key = [your key here], write = TRUE)
+
+
+  result <- geocode(res[["results"]][["formatted_address"]], output = "latlona", source = "google")
+  
+  accidents$lon[1] <- as.numeric(result[1])
+  
+  accidents$lat[1] <- as.numeric(result[2])
+  
+  accidents$geoAddress[i] <- as.character(result[3])
+  
+accidents
+
+CODE ENDS HERE
+
+While we are not able to actually map the data, we hope that you understand more about how to use the Google APIs. If you have anymore questions, this [site](https://developers.google.com/maps/documentation/geocoding/start?csw=1) is a good resource.
+
+##Concluding Thoughts
+In this tutorial we were able to begin by asking questions we were interested in learning about. Car accidents are an interesting topic because all of us are around cars all day and knowing that we are safe when there could be so many factors that could lead to injuries when dealing with cars would make driving less stressful for many people.
+
+This tutorial has demonstrated how to use the data pipeline to play with data and find interesting facts about things you could be curious about. We saw that even "clean data" sometimes needs to be cleaned more so that you can use it the way you need to and that statistical calculations and useful graphs from the data frame can help us make conclusions based on the qualitative observations. We then tried to see if we could use ML to predict injuries, but found that predictive models are not very useful for this data. Finally we went over how we can use R to look at geolocations and use powerful Google APIs, but that even they have limitations that are for us to expand upon in the future!
